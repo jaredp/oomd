@@ -97,13 +97,14 @@ KillMemoryGrowth<Base>::get_ranking_fn(
   // for killing by growth. nth is the index of the idx of the cgroup w/
   // smallest usage in the top P(growing_size_percentile_)
   int64_t growth_kill_min_effective_usage_threshold = 0;
+  size_t nth = 0;
+  auto cgroups_mutable_copy = cgroups;
   if (cgroups.size() > 0) {
-    const size_t nth =
+    nth =
         std::ceil(
             cgroups.size() *
             (100 - static_cast<double>(growing_size_percentile_)) / 100) -
         1;
-    auto cgroups_mutable_copy = cgroups;
     std::nth_element(
         cgroups_mutable_copy.begin(),
         cgroups_mutable_copy.begin() + nth,
@@ -111,7 +112,7 @@ KillMemoryGrowth<Base>::get_ranking_fn(
         [](const auto& a, const auto& b) {
           // order by effective_usage desc
           return a.get().effective_usage().value_or(0) >
-              a.get().effective_usage().value_or(0);
+              b.get().effective_usage().value_or(0);
         });
     growth_kill_min_effective_usage_threshold =
         cgroups_mutable_copy[nth].get().effective_usage().value_or(0);
@@ -142,6 +143,21 @@ KillMemoryGrowth<Base>::get_ranking_fn(
         size_phase_eligible ? effective_usage : 0,
         growth_phase_eligible ? growth_ratio : 0,
         effective_usage);
+
+    std::ostringstream oss;
+    for (const CgroupContext& cgroup_ctx : cgroups_mutable_copy) {
+      oss << " " << cgroup_ctx.effective_usage().value_or(0);
+    }
+
+    OLOG << cgroup_ctx.cgroup().relativePath() << " rank " 
+      << std::get<0>(rank) << "/"
+      << std::get<1>(rank) << "/"
+      << std::get<2>(rank)
+      << " phase " << (int)phase
+      << " eligable: " << size_phase_eligible << " " << growth_phase_eligible
+      << " thresholds: " << size_threshold_in_bytes << " " << min_growth_ratio_ << " " << growth_kill_min_effective_usage_threshold << " " << nth
+      << "AND" << oss.str();
+
 
     return std::make_pair(phase, rank);
   };
@@ -191,6 +207,7 @@ void KillMemoryGrowth<Base>::ologKillTarget(
       oss << "Picked \"" << target.cgroup().relativePath() << "\" ("
           << target.current_usage().value_or(0) / 1024 / 1024
           << "MB) based on growth rate " << target.memory_growth().value_or(0)
+          << " (min growth rate " << min_growth_ratio_ << "%)"
           << " among P" << growing_size_percentile_ << " largest,"
           << " with kill preference "
           << target.kill_preference().value_or(KillPreference::NORMAL);
